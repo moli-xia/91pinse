@@ -1,0 +1,16 @@
+# Git ignore file for Python projects with PyInstaller builds
+
+# Byte-code files
+*.pyc
+__pycache__/
+
+# PyInstaller
+*.spec
+build/
+dist/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+.localized
