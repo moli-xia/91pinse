@@ -49,13 +49,14 @@ python downloader.py
 如果你想将此脚本打包成一个独立的可执行文件（例如 `.exe` 文件在 Windows 上），你可以使用 `PyInstaller`。
 
 1.  安装 PyInstaller：
-    ```bash
+```bash
 pip install pyinstaller
-    ```
+```
+
 2.  在 `downloader.py` 所在的目录中运行：
-    ```bash
+```bash
 pyinstaller --noconsole --onefile downloader.py
-    ```
+```
     这将在 `dist` 目录下生成一个独立的可执行文件。
 
 ## 许可证
