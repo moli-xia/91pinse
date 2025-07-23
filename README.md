@@ -1,8 +1,10 @@
-# 91pinse 视频下载器
+# 91pinse 视频下载器(91porn视频镜像站)
 
-这是一个基于 Python 的桌面应用程序，用于从特定网站（91pinse）下载视频。它提供了一个简单的图形用户界面（GUI），方便用户输入视频页面链接并进行下载。
+这是一个基于 Python 的桌面应用程序，用于从特定网站（91pinse.com）下载视频。它提供了一个简单的图形用户界面（GUI），方便用户输入视频页面链接并进行下载。
 
 **请注意：本工具仅供学习和研究使用，请遵守当地法律法规，切勿用于非法用途。**
+
+![](https://s3.bmp.ovh/imgs/2025/07/23/ffbdb01a23a298f5.png)
 
 ## 功能特性
 
@@ -57,7 +59,7 @@ pip install pyinstaller
 ```bash
 pyinstaller --noconsole --onefile downloader.py
 ```
-    这将在 `dist` 目录下生成一个独立的可执行文件。
+这将在 `dist` 目录下生成一个独立的可执行文件。
 
 ## 许可证
 
