@@ -7,6 +7,7 @@ import requests
 import os
 import subprocess
 import sys
+import base64
 from urllib.parse import urljoin, urlparse
 
 def get_download_path():
@@ -16,6 +17,18 @@ def get_download_path():
         return os.path.dirname(os.path.abspath(__file__))
 
 DOWNLOAD_PATH = get_download_path()
+
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/136.0.0.0 Safari/537.36"
+)
+
+BASE_HEADERS = {
+    'User-Agent': DEFAULT_USER_AGENT,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+}
 
 def set_status(text):
     try:
@@ -90,7 +103,12 @@ def extract_media_urls(text, base_url):
             raw = m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1)
             if not raw:
                 continue
-            url = raw.replace("\\/", "/").replace("\\u0026", "&").strip()
+            url = (
+                raw.replace("\\u002F", "/")
+                .replace("\\/", "/")
+                .replace("\\u0026", "&")
+                .strip()
+            )
             if url.startswith("//"):
                 url = urljoin(base_url, url)
             elif url.startswith("/"):
@@ -106,24 +124,69 @@ def extract_media_urls(text, base_url):
             seen.add(u)
     return ordered
 
+def extract_base64_media_urls(text, base_url):
+    results = []
+    encoded_values = re.findall(r'["\']([A-Za-z0-9+/\\=]{24,})["\']', text)
+    for raw_value in encoded_values:
+        normalized = raw_value.replace("\\u003D", "=").replace("\\/", "/")
+        try:
+            decoded = base64.b64decode(normalized).decode("utf-8", "ignore")
+        except Exception:
+            continue
+        results.extend(extract_media_urls(decoded, base_url))
+
+    seen = set()
+    ordered = []
+    for u in results:
+        if u not in seen:
+            ordered.append(u)
+            seen.add(u)
+    return ordered
+
+def is_placeholder_media_url(url):
+    lowered = url.lower()
+    return (
+        '{' in url or
+        '}' in url or
+        'ping.m3u8' in lowered or
+        lowered.startswith('blob:')
+    )
+
 def pick_best_media_url(urls):
     if not urls:
         return None
-    mp4s = [u for u in urls if ".mp4" in u.lower()]
-    if mp4s:
-        return mp4s[0]
-    m3u8s = [u for u in urls if ".m3u8" in u.lower()]
-    if m3u8s:
-        return m3u8s[0]
-    return urls[0]
+
+    candidates = [u for u in urls if not is_placeholder_media_url(u)]
+    if not candidates:
+        candidates = urls
+
+    def score(url):
+        lowered = url.lower()
+        value = 0
+        if '.m3u8' in lowered:
+            value += 300
+        elif '.mp4' in lowered:
+            value += 200
+        if 'master.m3u8' in lowered:
+            value += 120
+        if 'expires=' in lowered:
+            value += 60
+        if 'trailer' in lowered:
+            value -= 400
+        if 'preview' in lowered or 'thumb' in lowered:
+            value -= 150
+        return value
+
+    return max(candidates, key=score)
 
 def extract_with_ytdlp(target_url, referer_url):
     try:
         ydl_opts = {
             'quiet': True,
+            'no_warnings': True,
             'skip_download': True,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0',
+                **BASE_HEADERS,
                 'Referer': referer_url,
             },
         }
@@ -150,23 +213,21 @@ def extract_with_ytdlp(target_url, referer_url):
 def find_video_url(page_url):
     try:
         session = requests.Session()
-        base_headers = {
-            'User-Agent': 'Mozilla/5.0',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        }
 
         set_status("第1/3步: 正在获取主页面...")
-        main_page_response = session.get(page_url, headers=base_headers, timeout=20)
+        main_page_response = session.get(page_url, headers=BASE_HEADERS, timeout=20)
         main_page_response.raise_for_status()
+        final_page_url = main_page_response.url or page_url
 
         set_status("第2/3步: 正在查找播放器...")
         main_text = main_page_response.text
-        media_urls = extract_media_urls(main_text, page_url)
+        media_urls = extract_media_urls(main_text, final_page_url)
+        media_urls.extend(extract_base64_media_urls(main_text, final_page_url))
         best = pick_best_media_url(media_urls)
         if best:
-            return best, page_url
+            return best, final_page_url
 
-        iframe_urls = extract_iframe_urls(main_text, page_url)
+        iframe_urls = extract_iframe_urls(main_text, final_page_url)
         if not iframe_urls:
             set_status("错误: 找不到视频播放器。")
             return None
@@ -176,11 +237,12 @@ def find_video_url(page_url):
             try:
                 iframe_response = session.get(
                     iframe_url,
-                    headers={**base_headers, 'Referer': page_url},
+                    headers={**BASE_HEADERS, 'Referer': final_page_url},
                     timeout=20
                 )
                 iframe_response.raise_for_status()
                 iframe_media_urls = extract_media_urls(iframe_response.text, iframe_url)
+                iframe_media_urls.extend(extract_base64_media_urls(iframe_response.text, iframe_url))
                 best = pick_best_media_url(iframe_media_urls)
                 if best:
                     return best, iframe_url
@@ -188,11 +250,11 @@ def find_video_url(page_url):
                 continue
 
         set_status("正在尝试使用 yt-dlp 解析...")
-        ytdlp_url = extract_with_ytdlp(page_url, page_url)
+        ytdlp_url = extract_with_ytdlp(final_page_url, final_page_url)
         if ytdlp_url:
-            return ytdlp_url, page_url
+            return ytdlp_url, final_page_url
         for iframe_url in iframe_urls:
-            ytdlp_url = extract_with_ytdlp(iframe_url, page_url)
+            ytdlp_url = extract_with_ytdlp(iframe_url, final_page_url)
             if ytdlp_url:
                 return ytdlp_url, iframe_url
 
@@ -237,7 +299,7 @@ def download_video(page_url):
             'paths': {'home': DOWNLOAD_PATH},
             'outtmpl': os.path.join(DOWNLOAD_PATH, '%(title)s.%(ext)s'),
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0',
+                **BASE_HEADERS,
                 'Referer': referer_url,
                 **({'Origin': origin} if origin else {}),
             },
